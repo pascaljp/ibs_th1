@@ -8,6 +8,10 @@ class IBS_TH1 {
    *   called when a realtime data is received.
    */
   constructor(opt_obsolete_callback) {
+    console.log(opt_obsolete_callback);
+    if (opt_obsolete_callback) {
+      console.error('constructor of IBS_TH1 does not take an argument anymore.');
+    }
     // Variable to support deprecated functions start() and stop().
     this.subscribe_realtime_data_callback_ = opt_obsolete_callback;
   }
@@ -75,11 +79,13 @@ class IBS_TH1 {
 
   // To start receiving realtime data.
   start() {
+    console.error('This function is replaced by subscribeRealtimeData(), and will be deleted after 2018/12/01.');
     this.subscribeRealtimeData(this.subscribe_realtime_data_callback_);
   }
 
   // To stop receiving realtime data.
   stop() {
+    console.error('This function is replaced by unsubscribeRealtimeData(), and will be deleted after 2018/12/01.');
     this.unsubscribeRealtimeData();
   }
 
