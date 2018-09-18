@@ -3,19 +3,22 @@
 const noble = require('noble');
 
 class IBS_TH1 {
+
   /**
-   * @param {function} opt_obsolete_subscribe_callback A callback function that is
-   *   called when a realtime data is received.
+   * @param {function(IBS_TH1.Data)} opt_obsolete_subscribe_callback A callback
+   *   function that is called when a realtime data is received.
    */
-  constructor(opt_obsolete_callback) {
-    console.log(opt_obsolete_callback);
-    if (opt_obsolete_callback) {
+  constructor(opt_obsolete_subscribe_callback) {
+    if (opt_obsolete_subscribe_callback) {
       console.error('constructor of IBS_TH1 does not take an argument anymore.');
     }
     // Variable to support deprecated functions start() and stop().
-    this.subscribe_realtime_data_callback_ = opt_obsolete_callback;
+    this.subscribe_realtime_data_callback_ = opt_obsolete_subscribe_callback;
   }
 
+  /**
+   * @param {Buffer} buffer
+   */
   static getCrc16(buffer) {
     let crc16 = 0xffff;
     for (let byte of buffer) {
@@ -31,7 +34,11 @@ class IBS_TH1 {
     return crc16;
   }
 
-  discovered_(peripheral, callback) {
+  /**
+   * @param {Peripheral} peripheral
+   * @param {function(IBS_TH1.Data)} callback
+   */
+  onRealtimeDataReceived_(peripheral, callback) {
     if (peripheral.advertisement.localName != IBS_TH1.DEVICE_NAME) {
       return;
     }
@@ -42,11 +49,9 @@ class IBS_TH1 {
 
     const expectedCrc16 = buffer[6] * 256 + buffer[5];
     if (expectedCrc16 != IBS_TH1.getCrc16(buffer.slice(0, 5))) {
-      callback({
-	'uuid': peripheral.uuid,
-	'date': new Date(),
-	'error': 'CRC error',
-      });
+      const realtimeData = new IBS_TH1.Data(peripheral.uuid);
+      realtimeData.error = 'CRC error';
+      callback(realtimeData);
       return;
     }
 
@@ -59,22 +64,12 @@ class IBS_TH1 {
 	  IBS_TH1.ProbeTypeEnum.UNKNOWN;
     const battery = buffer[7];
     const productionTestData = buffer[8];
-    callback({
-      'uuid': peripheral.uuid,
-      'date': new Date(),
-      'temperature': temperature,
-      'humidity': humidity,
-      'probeType': probeType,
-      'battery': battery,
-      'error': null,
-    });
-  }
-
-  scanStart_(callback) {
-    noble.on('discover', (peripheral) => {
-      this.discovered_(peripheral, callback);
-    });
-    noble.startScanning([IBS_TH1.SERVICE_UUID], true /*allowDuplicates*/);
+    const realtimeData = new IBS_TH1.Data(peripheral.uuid);
+    realtimeData.temperature = temperature;
+    realtimeData.humidity = humidity;
+    realtimeData.probeType = probeType;
+    realtimeData.battery = battery;
+    callback(realtimeData);
   }
 
   // To start receiving realtime data.
@@ -89,18 +84,40 @@ class IBS_TH1 {
     this.unsubscribeRealtimeData();
   }
 
+  /**
+   * @param {function(IBS_TH1.Data)} callback
+   */
   subscribeRealtimeData(callback) {
+    const scanStart = callback => {
+      noble.on('discover', peripheral => {
+	this.onRealtimeDataReceived_(peripheral, callback);
+      });
+      noble.startScanning([IBS_TH1.SERVICE_UUID], true /*allowDuplicates*/);
+    };
+
     if (noble.state === 'poweredOn') {
-      this.scanStart_(callback);
+      scanStart(callback);
     } else {
       noble.on('stateChange', () => {
-	this.scanStart_(callback);
+	scanStart(callback);
       });
     }
   }
 
   unsubscribeRealtimeData() {
     noble.stopScanning();
+  }
+}
+
+IBS_TH1.Data = class {
+  constructor(uuid) {
+    this.uuid = uuid;
+    this.date = new Date();
+    this.temperature = null;
+    this.humidity = null;
+    this.probeType = IBS_TH1.ProbeTypeEnum.UNKNOWN;
+    this.battery = null;
+    this.error = null;
   }
 }
 
