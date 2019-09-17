@@ -5,8 +5,8 @@ const callback = data => {
     console.error(data['error']);
     return;
   }
-  console.log(data['uuid'], data['date'], data['temperature'], data['humidity'],
-	      data['probeType'], data['battery']);
+  console.log(data['address'], data['uuid'], data['date'], data['temperature'],
+	      data['humidity'], data['probeType'], data['battery']);
 };
 
 const device = new IBS_TH1();
