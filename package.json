@@ -6,10 +6,10 @@
   "version": "1.0.4",
   "repository": {
     "type": "git",
-    "url": "https://github.com/pascaljp/ibs_th1.git",
+    "url": "https://github.com/pascaljp/ibs_th1.git"
   },
   "bugs": {
-    "url": "https://github.com/pascaljp/ibs_th1/issues",
+    "url": "https://github.com/pascaljp/ibs_th1/issues"
   },
   "keywords": [
     "inkbird",
@@ -17,13 +17,13 @@
   ],
   "main": "./ibs_th1.js",
   "engines": {
-    // Need to check.
     "node": ">=6"
   },
   "os": [
-    "darwin",
+    "darwin"
   ],
   "dependencies": {
     "@abandonware/noble": "^1.9.2-5",
-  },
+    "log4js": "^5.1.0"
+  }
 }

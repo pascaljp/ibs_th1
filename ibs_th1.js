@@ -1,10 +1,20 @@
 'use strict';
 
+const log4js = require('log4js')
 const noble = require('@abandonware/noble');
 
 class IBS_TH1 {
 
-  constructor() {
+  /**
+   * @param {Object} opt_params
+   */
+  constructor(opt_params) {
+    if (opt_params && 'logger' in opt_params) {
+      this.logger_ = opt_logger;
+    } else {
+      this.logger_ = log4js.getLogger();
+      this.logger_.level = 'info';
+    }
     this.uuid_to_address_ = {};
   }
 
@@ -17,22 +27,34 @@ class IBS_TH1 {
       noble.on('discover', peripheral => {
 	this.onDiscover_(peripheral)
 	  .then(realtimeData => callback(realtimeData))
-	  .catch(err => {console.log(err)});
+	  .catch(err => { this.logger_.trace(err); });
       });
       noble.startScanning([IBS_TH1.SERVICE_UUID], true /*allowDuplicates*/);
+      this.logger_.info('Started to scan Bluetooth signals');
+    };
+
+    const scanStop = () => {
+      noble.stopScanning();
+      this.logger_.info('Stopped to scan Bluetooth signals');
     };
 
     if (noble.state === 'poweredOn') {
       scanStart(callback);
     } else {
-      noble.on('stateChange', () => {
-	scanStart(callback);
+      noble.on('stateChange', (state) => {
+	if (state == 'poweredOn') {
+	  scanStart(callback);
+	} else {
+	  this.scanStop();
+	}
       });
     }
   }
 
   unsubscribeRealtimeData() {
+    noble.on('stateChange', (state) => {});
     noble.stopScanning();
+    this.logger_.info('Stopped to scan Bluetooth signals');
   }
 
   //
@@ -42,30 +64,30 @@ class IBS_TH1 {
   async onDiscover_(peripheral) {
     return new Promise((resolve, reject) => {
       if (peripheral.advertisement.localName != IBS_TH1.DEVICE_NAME) {
-	reject('Not a target device');
+	reject('Discovered => Not a target device');
 	return;
       }
       const buffer = peripheral.advertisement.manufacturerData;
       if (!buffer || buffer.byteLength != 9) {
-	reject('Unexpected advertisement data');
+	reject('Discovered => Unexpected advertisement data');
 	return;
       }
       const expectedCrc16 = buffer[6] * 256 + buffer[5];
       if (expectedCrc16 != IBS_TH1.getCrc16(buffer.slice(0, 5))) {
-	reject('CRC error');
+	reject('Discovered => CRC error');
 	return;
       }
 
       if (!(peripheral.uuid in this.uuid_to_address_)) {
 	// Check the address from now.
 	this.uuid_to_address_[peripheral.uuid] = null;
-	this.connect_(peripheral);
-	reject('Fetching address now');
+	//this.connect_(peripheral);
+	reject('Discovered => Address fetch started. Ignoring.');
 	return;
       }
       if (this.uuid_to_address_[peripheral.uuid] == null) {
 	// Checking address now.
-	reject('Fetching address now');
+	reject('Discovered => Address fetch on flight. Ignoring.');
 	return;
       }
 
@@ -81,6 +103,7 @@ class IBS_TH1 {
       const productionIBS_TH1Data = buffer[8];
       const realtimeData = {};
       realtimeData.uuid = peripheral.uuid;
+      realtimeData.date = new Date;
       realtimeData.address = this.uuid_to_address_[peripheral.uuid];
       realtimeData.temperature = temperature;
       realtimeData.humidity = humidity;
@@ -91,14 +114,14 @@ class IBS_TH1 {
   }
 
   async connect_(peripheral) {
-    console.debug('Getting address of peripheral device with uuid =', peripheral.uuid);
+    this.logger_.debug('Getting address of peripheral device with uuid =', peripheral.uuid);
     return new Promise((resolve, reject) => {
       peripheral.connect(err => {
 	if (err) {
 	  reject('connect result:', err);
 	  return;
 	}
-	// peripheral.disconnect(err => console.log('Disconnected:', err));
+	peripheral.disconnect(err => reject('Failed to disconnect from', peripheral.uuid));
 	if (err || !peripheral.uuid) {
 	  delete this.uuid_to_address_[peripheral.uuid];
 	  reject(err);
@@ -106,6 +129,8 @@ class IBS_TH1 {
 	}
 
 	this.uuid_to_address_[peripheral.uuid] = peripheral.address;
+	this.logger_.debug(
+	  'Connected', {'uuid': peripheral.uuid, 'address': peripheral.address});
 	resolve(peripheral);
       });
     });
