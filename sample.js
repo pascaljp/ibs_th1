@@ -1,4 +1,4 @@
-const IBS_TH1 = require('ibs_th1');
+const IBS_TH1 = require('./ibs_th1');
 
 const callback = data => {
   if (data['error']) {
@@ -17,4 +17,4 @@ setTimeout(() => {
   device.unsubscribeRealtimeData();
   console.log('Unsubscribed');
   process.exit();
-}, 10000);
+}, 1000000);
