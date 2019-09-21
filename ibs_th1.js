@@ -81,7 +81,7 @@ class IBS_TH1 {
       if (!(peripheral.uuid in this.uuid_to_address_)) {
 	// Check the address from now.
 	this.uuid_to_address_[peripheral.uuid] = null;
-	//this.connect_(peripheral);
+	this.connect_(peripheral);
 	reject('Discovered => Address fetch started. Ignoring.');
 	return;
       }

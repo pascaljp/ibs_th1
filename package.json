@@ -1,7 +1,7 @@
 {
   "author": "Koichi Suematsu",
   "license": "MIT",
-  "name": "@pascaljp/ibs_th1",
+  "name": "ibs_th1",
   "description": "Library to process data broadcasted from IBS-TH1 / IBS-TH1 mini.",
   "version": "1.0.4",
   "repository": {
