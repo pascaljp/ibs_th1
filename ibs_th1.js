@@ -1,6 +1,6 @@
 'use strict';
 
-const noble = require('noble');
+const noble = require('@abandonware/noble');
 
 class IBS_TH1 {
 
@@ -91,14 +91,14 @@ class IBS_TH1 {
   }
 
   async connect_(peripheral) {
-    console.log('Getting address of peripheral device with uuid =', peripheral.uuid);
+    console.debug('Getting address of peripheral device with uuid =', peripheral.uuid);
     return new Promise((resolve, reject) => {
       peripheral.connect(err => {
 	if (err) {
 	  reject('connect result:', err);
 	  return;
 	}
-	peripheral.disconnect(err => console.log('Disconnected:', err));
+	// peripheral.disconnect(err => console.log('Disconnected:', err));
 	if (err || !peripheral.uuid) {
 	  delete this.uuid_to_address_[peripheral.uuid];
 	  reject(err);
