@@ -1,6 +1,6 @@
 # IBS-TH1
 
-> A library to handle broadcasted message from bluetooth device [IBS-TH1](http://www.ink-bird.com/products-smart-sensor-ibsth1.html) and [IBS-TH1 mini](http://www.ink-bird.com/products-smart-sensor-ibsth1mini.html).
+> A library to handle broadcasted message from bluetooth device [IBS-TH1](http://www.ink-bird.com/products-smart-sensor-ibsth1.html) and [IBS-TH1 mini](http://www.ink-bird.com/products-smart-sensor-ibsth1mini.html). Not tested with other devices.
 
 [![NPM Version][npm-image]][npm-url]
 
