@@ -10,7 +10,7 @@ class IBS_TH1 {
    */
   constructor(opt_params) {
     if (opt_params && 'logger' in opt_params) {
-      this.logger_ = opt_logger;
+      this.logger_ = opt_params['logger'];
     } else {
       this.logger_ = log4js.getLogger();
       this.logger_.level = 'info';
@@ -101,7 +101,7 @@ class IBS_TH1 {
 	    IBS_TH1.ProbeTypeEnum.UNKNOWN;
       const battery = buffer[7];
       const productionIBS_TH1Data = buffer[8];
-      const realtimeData = {};
+      const realtimeData = new IBS_TH1.RealtimeData();
       realtimeData.uuid = peripheral.uuid;
       realtimeData.date = new Date;
       realtimeData.address = this.uuid_to_address_[peripheral.uuid];
@@ -152,6 +152,27 @@ class IBS_TH1 {
       }
     }
     return crc16;
+  }
+}
+
+IBS_TH1.RealtimeData = class {
+  constructor() {
+    this.address = null;
+    this.uuid = null;
+    this.date = null;
+    this.probeType = null;
+    this.temperature = null;
+    this.humidity = null;
+    this.battery = null;
+  }
+
+  set uuid(data) { this.uuid_ = data; }
+
+  get uuid() {
+    this.logger_.warning(
+      '"uuid" field is deprecated because device\'s UUID sometimes changes ' +
+	'(e.g. when the battery is changed). Use "address" field instead.');
+    return this.uuid_;
   }
 }
 
