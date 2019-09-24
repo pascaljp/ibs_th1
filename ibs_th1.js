@@ -26,8 +26,9 @@ class IBS_TH1 {
     const scanStart = callback => {
       noble.on('discover', peripheral => {
 	this.onDiscover_(peripheral)
-	  .then(realtimeData => callback(realtimeData))
-	  .catch(err => { this.logger_.trace(err); });
+	  .catch(err => { this.logger_.trace(err); })
+	  .then(realtimeData => { realtimeData && callback(realtimeData); })
+	  .catch(err => { this.logger_.error(err); });
       });
       noble.startScanning([IBS_TH1.SERVICE_UUID], true /*allowDuplicates*/);
       this.logger_.info('Started to scan Bluetooth signals');
@@ -101,7 +102,7 @@ class IBS_TH1 {
 	    IBS_TH1.ProbeTypeEnum.UNKNOWN;
       const battery = buffer[7];
       const productionIBS_TH1Data = buffer[8];
-      const realtimeData = new IBS_TH1.RealtimeData();
+      const realtimeData = new IBS_TH1.RealtimeData(this.logger_);
       realtimeData.uuid = peripheral.uuid;
       realtimeData.date = new Date;
       realtimeData.address = this.uuid_to_address_[peripheral.uuid];
@@ -156,7 +157,9 @@ class IBS_TH1 {
 }
 
 IBS_TH1.RealtimeData = class {
-  constructor() {
+  constructor(logger) {
+    this.logger_ = logger;
+
     this.address = null;
     this.uuid = null;
     this.date = null;
@@ -169,7 +172,7 @@ IBS_TH1.RealtimeData = class {
   set uuid(data) { this.uuid_ = data; }
 
   get uuid() {
-    this.logger_.warning(
+    this.logger_.warn(
       '"uuid" field is deprecated because device\'s UUID sometimes changes ' +
 	'(e.g. when the battery is changed). Use "address" field instead.');
     return this.uuid_;
