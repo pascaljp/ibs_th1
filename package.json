@@ -3,7 +3,7 @@
   "license": "MIT",
   "name": "ibs_th1",
   "description": "Library to process data broadcasted from IBS-TH1 / IBS-TH1 mini.",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "repository": {
     "type": "git",
     "url": "https://github.com/pascaljp/ibs_th1.git"
