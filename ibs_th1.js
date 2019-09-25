@@ -1,7 +1,10 @@
 'use strict';
 
+const fs = require('fs');
 const log4js = require('log4js')
 const noble = require('@abandonware/noble');
+const os = require('os');
+const path = require('path');
 
 class IBS_TH1 {
 
@@ -15,7 +18,7 @@ class IBS_TH1 {
       this.logger_ = log4js.getLogger();
       this.logger_.level = 'info';
     }
-    this.uuid_to_address_ = {};
+    this.uuid_to_address_ = new IBS_TH1.Config('uuid_to_address').load();
   }
 
   //
@@ -130,6 +133,15 @@ class IBS_TH1 {
 	}
 
 	this.uuid_to_address_[peripheral.uuid] = peripheral.address;
+	{
+	  const data = {};
+	  for (let key in this.uuid_to_address_) {
+	    if (this.uuid_to_address_[key] != null) {
+	      data[key] = this.uuid_to_address_[key];
+	    }
+	  }
+	  new IBS_TH1.Config('uuid_to_address').save(data);
+	}
 	this.logger_.debug(
 	  'Connected', {'uuid': peripheral.uuid, 'address': peripheral.address});
 	resolve(peripheral);
@@ -178,6 +190,36 @@ IBS_TH1.RealtimeData = class {
     return this.uuid_;
   }
 }
+
+IBS_TH1.Config = class {
+  constructor(configName) {
+    this.homeDir_ = os.homedir();
+    this.configDir_ = path.resolve(this.homeDir_, './.ibs_th1/')
+    this.configPath_ = path.resolve(this.configDir_, './' + configName);
+  }
+
+  load() {
+    try {
+      const data = JSON.parse(fs.readFileSync(this.configPath_, 'utf8'));
+      return data;
+    } catch(err) {
+      this.save({});
+      return {};
+    }
+  }
+
+  save(data) {
+    if (!fs.existsSync(this.configDir_)) {
+      fs.mkdirSync(this.configDir_, {'mode': 0o700, 'recursive': true});
+    }
+
+    fs.writeFileSync(
+      this.configPath_,
+      JSON.stringify(data),
+      {'encoding': 'utf8', 'mode': 0o700});
+  }
+}
+
 
 // Device name for IBS-TH1 and IBS-TH1 mini.
 IBS_TH1.DEVICE_NAME = 'sps';
