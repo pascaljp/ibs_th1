@@ -1,23 +1,15 @@
 'use strict';
 
 const fs = require('fs');
-const log4js = require('log4js')
+const log4js = require('log4js');
 const noble = require('@abandonware/noble');
 const os = require('os');
 const path = require('path');
 
 class IBS_TH1 {
 
-  /**
-   * @param {Object} opt_params
-   */
-  constructor(opt_params) {
-    if (opt_params && 'logger' in opt_params) {
-      this.logger_ = opt_params['logger'];
-    } else {
-      this.logger_ = log4js.getLogger();
-      this.logger_.level = 'info';
-    }
+  constructor() {
+    this.logger_ = log4js.getLogger('ibs_th1');
     this.uuid_to_address_ = new IBS_TH1.Config('uuid_to_address').load();
   }
 
