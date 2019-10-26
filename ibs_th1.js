@@ -9,6 +9,7 @@ const path = require('path');
 class IBS_TH1 {
 
   constructor() {
+    this.callback_ = null;
     this.logger_ = log4js.getLogger('ibs_th1');
     this.uuid_to_address_ = new IBS_TH1.Config('uuid_to_address').load();
   }
@@ -18,6 +19,8 @@ class IBS_TH1 {
   //
 
   subscribeRealtimeData(callback) {
+    this.callback_ = callback;
+
     const scanStart = callback => {
       noble.on('discover', peripheral => {
 	this.onDiscover_(peripheral)
@@ -29,11 +32,6 @@ class IBS_TH1 {
       this.logger_.info('Started to scan Bluetooth signals');
     };
 
-    const scanStop = () => {
-      noble.stopScanning();
-      this.logger_.info('Stopped to scan Bluetooth signals');
-    };
-
     if (noble.state === 'poweredOn') {
       scanStart(callback);
     } else {
@@ -41,16 +39,23 @@ class IBS_TH1 {
 	if (state == 'poweredOn') {
 	  scanStart(callback);
 	} else {
-	  this.scanStop();
+	  this.unsubscribeRealtimeData();
 	}
       });
     }
   }
 
   unsubscribeRealtimeData() {
-    noble.on('stateChange', (state) => {});
+    noble.removeAllListeners('discover');
+    noble.removeAllListeners('stateChange');
     noble.stopScanning();
     this.logger_.info('Stopped to scan Bluetooth signals');
+  }
+
+  restart() {
+    this.logger_.info('Restarting');
+    this.unsubscribeRealtimeData();
+    this.subscribeRealtimeData(this.callback_);
   }
 
   //
@@ -58,7 +63,7 @@ class IBS_TH1 {
   //
 
   async onDiscover_(peripheral) {
-    return new Promise((resolve, reject) => {
+    return new Promise(async (resolve, reject) => {
       if (peripheral.advertisement.localName != IBS_TH1.DEVICE_NAME) {
 	reject('Discovered => Not a target device');
 	return;
@@ -77,7 +82,7 @@ class IBS_TH1 {
       if (!(peripheral.uuid in this.uuid_to_address_)) {
 	// Check the address from now.
 	this.uuid_to_address_[peripheral.uuid] = null;
-	this.connect_(peripheral);
+	await this.connect_(peripheral);
 	reject('Discovered => Address fetch started. Ignoring.');
 	return;
       }
@@ -114,29 +119,36 @@ class IBS_TH1 {
     return new Promise((resolve, reject) => {
       peripheral.connect(err => {
 	if (err) {
-	  reject('connect result:', err);
+	  reject('connect failure:', err);
 	  return;
 	}
-	peripheral.disconnect(err => reject('Failed to disconnect from', peripheral.uuid));
-	if (err || !peripheral.uuid) {
-	  delete this.uuid_to_address_[peripheral.uuid];
-	  reject(err);
-	  return;
-	}
-
-	this.uuid_to_address_[peripheral.uuid] = peripheral.address;
-	{
-	  const data = {};
-	  for (let key in this.uuid_to_address_) {
-	    if (this.uuid_to_address_[key] != null) {
-	      data[key] = this.uuid_to_address_[key];
-	    }
+	peripheral.disconnect(err => {
+	  if (err) {
+	    delete this.uuid_to_address_[peripheral.uuid];
+	    reject('Failed to disconnect from', peripheral.uuid, ':', err);
+	    return;
 	  }
-	  new IBS_TH1.Config('uuid_to_address').save(data);
-	}
-	this.logger_.debug(
-	  'Connected', {'uuid': peripheral.uuid, 'address': peripheral.address});
-	resolve(peripheral);
+	  if (!peripheral.uuid) {
+	    delete this.uuid_to_address_[peripheral.uuid];
+	    reject('No UUID');
+	    return;
+	  }
+
+	  this.uuid_to_address_[peripheral.uuid] = peripheral.address;
+	  {
+	    const data = {};
+	    for (let key in this.uuid_to_address_) {
+	      if (this.uuid_to_address_[key] != null) {
+	        data[key] = this.uuid_to_address_[key];
+	      }
+	    }
+	    new IBS_TH1.Config('uuid_to_address').save(data);
+	  }
+	  this.logger_.debug(
+	    'Connected', {'uuid': peripheral.uuid, 'address': peripheral.address});
+          this.restart();
+	  resolve(peripheral);
+        });
       });
     });
   }

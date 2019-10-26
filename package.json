@@ -20,7 +20,8 @@
     "node": ">=6"
   },
   "os": [
-    "darwin"
+    "darwin",
+    "linux"
   ],
   "dependencies": {
     "@abandonware/noble": "^1.9.2-5",
