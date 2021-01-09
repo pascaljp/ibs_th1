@@ -1,3 +1,8 @@
+## Version 1.1.0
+
+* Support IBS-TH1 Plus.
+
+
 ## Version 1.0.5
 
 * Since noble package is not maintained well, now this package depends on @abandonware/noble. Installation became easier.
