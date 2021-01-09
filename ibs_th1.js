@@ -73,11 +73,17 @@ class IBS_TH1 {
 	reject('Discovered => Unexpected advertisement data');
 	return;
       }
-      const expectedCrc16 = buffer[6] * 256 + buffer[5];
-      if (expectedCrc16 != IBS_TH1.getCrc16(buffer.slice(0, 5))) {
-	reject('Discovered => CRC error');
-	return;
-      }
+      // Disable CRC check logic because IBS-TH1 plus seems to have non-CRC data
+      // in the buffer. "buffer[6]<<8 & buffer[6]" is increasing one by one, so
+      // I'm assuming the value is the index of data stored inside the device.
+      // The device can store up to 30000 data points in it, so maybe the value
+      // corresponds to that index. This idea needs to be verified.
+      // const expectedCrc16 = buffer[6] * 256 + buffer[5];
+      // if (expectedCrc16 != IBS_TH1.getCrc16(buffer.slice(0, 5))) {
+      //   console.error('CRC error', this.uuid_to_address_[peripheral.uuid]);
+	  //   reject('Discovered => CRC error');
+	  //   return;
+      // }
 
       if (!(peripheral.uuid in this.uuid_to_address_)) {
 	// Check the address from now.
