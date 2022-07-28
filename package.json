@@ -17,7 +17,9 @@
   ],
   "main": "dist/ibs_th1.js",
   "types": "dist/ibs_th1.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc --outDir dist --lib es6 --downlevelIteration --esModuleInterop --noUnusedLocals --noUnusedParameters --noImplicitReturns --noFallthroughCasesInSwitch --types --noImplicitThis --alwaysStrict --strictPropertyInitialization --strictBindCallApply --strictFunctionTypes --strictNullChecks --noImplicitAny ibs_th1.ts",
     "test": "ts-node tests/sample.ts"
@@ -31,7 +33,7 @@
   ],
   "dependencies": {
     "@abandonware/noble": "^1.9.2-5",
-    "log4js": "^5.1.0"
+    "log4js": "^6.6.1"
   },
   "devDependencies": {
     "@types/node": "^14.14.35"
