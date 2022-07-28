@@ -18,11 +18,11 @@ declare class IBS_TH1 {
     static getCrc16(buffer: Buffer): number;
 }
 interface RealtimeData {
-    address: string | null;
-    date: Date | null;
+    address: string;
+    date: Date;
     probeType: ProbeType;
-    temperature: number | null;
-    humidity: number | null;
-    battery: number | null;
+    temperature: number;
+    humidity: number;
+    battery: number;
 }
 export { IBS_TH1, RealtimeData };
