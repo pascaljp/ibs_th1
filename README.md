@@ -13,11 +13,22 @@ npm i -S ibs_th1
 ## Usage
 
 ```javascript
-const IBS_TH1 = require('ibs_th1');
+const {IBS_TH1} = require('ibs_th1');
 
 const callback = data => {
   console.log(data.address, data.date, data.temperature, data.humidity,
               data.probeType, data.battery);
+};
+
+const device = new IBS_TH1();
+device.subscribeRealtimeData(callback);
+```
+
+```typescript
+import {IBS_TH1, RealtimeData} from '../src/ibs_th1';
+
+const callback = (data: RealtimeData) => {
+  console.log(data);
 };
 
 const device = new IBS_TH1();
