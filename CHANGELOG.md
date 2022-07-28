@@ -1,3 +1,10 @@
+## Version 1.2.0
+
+* Change the language from JavaScript to TypeScript.
+* Deleted some legacy code.
+  * Type of data.proveType is changed from number to a descriptive string.
+  * data.uuid is no longer available. Please use data.address instead.
+
 ## Version 1.1.0
 
 * Support IBS-TH1 Plus.

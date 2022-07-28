@@ -1,9 +1,9 @@
-const log4js = require('log4js')
-const IBS_TH1 = require('./ibs_th1');
+import Log4js from 'log4js';
+import {IBS_TH1, RealtimeData} from '../src/ibs_th1';
 
-log4js.getLogger('ibs_th1').level = 'trace';
+Log4js.getLogger('ibs_th1').level = 'trace';
 
-const callback = data => {
+const callback = (data: RealtimeData) => {
   console.log(data);
 };
 
