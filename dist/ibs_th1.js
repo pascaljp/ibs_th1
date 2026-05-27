@@ -1,7 +1,11 @@
 'use strict';
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
-    Object.defineProperty(o, k2, { enumerable: true, get: function() { return m[k]; } });
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
 }) : (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     o[k2] = m[k];
@@ -11,37 +15,56 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
 }) : function(o, v) {
     o["default"] = v;
 });
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-};
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.IBS_TH1 = void 0;
+exports.parseRealtimeData = exports.IbsTh1Scanner = exports.FileAddressCache = exports.IBS_TH1 = void 0;
+exports.crc16 = crc16;
 const fs = __importStar(require("fs"));
 const Log4js = __importStar(require("log4js"));
-const noble_1 = __importDefault(require("@abandonware/noble"));
 const os = __importStar(require("os"));
 const path = __importStar(require("path"));
+const parser_1 = require("./parser");
+Object.defineProperty(exports, "parseRealtimeData", { enumerable: true, get: function () { return parser_1.parseRealtimeData; } });
 const logger = Log4js.getLogger('ibs_th1');
 // Device name for IBS-TH1, IBS-TH1 mini and IBS_TH1 Plus.
 const DEVICE_NAME = 'sps';
-class IBS_TH1 {
-    constructor() {
+class IbsTh1Scanner {
+    constructor(options = {}) {
+        this.discoverListener_ = null;
+        this.stateChangeListener_ = null;
+        this.subscriptionId_ = 0;
         this.address_fetch_status_ = new Map();
-        this.uuid_to_address_ = new Config('uuid_to_address').load();
+        this.noble_ = options.noble || loadDefaultNoble();
+        this.addressCache_ = options.addressCache || new FileAddressCache('uuid_to_address');
+        this.uuid_to_address_ = this.addressCache_.load();
     }
     //
     // Public functions.
     //
-    subscribeRealtimeData(callback) {
+    subscribe(callback) {
+        const subscriptionId = ++this.subscriptionId_;
         const scanStart = (callback) => {
-            noble_1.default.on('discover', async (peripheral) => {
+            const wasScanning = this.discoverListener_ != null;
+            if (this.discoverListener_ != null) {
+                this.noble_.removeListener('discover', this.discoverListener_);
+            }
+            this.discoverListener_ = async (peripheral) => {
                 if (!this.isTargetDevice_(peripheral)) {
                     return;
                 }
@@ -60,34 +83,53 @@ class IBS_TH1 {
                 catch (err) {
                     logger.error(err);
                 }
-            });
-            noble_1.default.startScanning([ /*SERVICE_UUID*/], true /*allowDuplicates*/);
+            };
+            this.noble_.on('discover', this.discoverListener_);
+            if (!wasScanning) {
+                IbsTh1Scanner.incrementActiveScanCount_(this.noble_);
+            }
+            this.noble_.startScanning([ /*SERVICE_UUID*/], true /*allowDuplicates*/);
             logger.info('Started to scan Bluetooth signals');
         };
-        if (noble_1.default.state === 'poweredOn') {
+        if (this.noble_.state === 'poweredOn') {
             scanStart(callback);
         }
         else {
-            noble_1.default.on('stateChange', (state) => {
+            if (this.stateChangeListener_ != null) {
+                this.noble_.removeListener('stateChange', this.stateChangeListener_);
+            }
+            this.stateChangeListener_ = (state) => {
                 if (state == 'poweredOn') {
                     scanStart(callback);
                 }
                 else {
-                    this.unsubscribeRealtimeData();
+                    this.stop_();
                 }
-            });
+            };
+            this.noble_.on('stateChange', this.stateChangeListener_);
         }
+        return {
+            unsubscribe: () => {
+                this.stop_(subscriptionId);
+            },
+        };
     }
-    unsubscribeRealtimeData() {
-        noble_1.default.removeAllListeners('discover');
-        noble_1.default.removeAllListeners('stateChange');
-        noble_1.default.stopScanning();
+    stop_(subscriptionId) {
+        if (subscriptionId != null && subscriptionId !== this.subscriptionId_) {
+            return;
+        }
+        if (this.discoverListener_ != null) {
+            this.noble_.removeListener('discover', this.discoverListener_);
+            this.discoverListener_ = null;
+            if (IbsTh1Scanner.decrementActiveScanCount_(this.noble_) === 0) {
+                this.noble_.stopScanning();
+            }
+        }
+        if (this.stateChangeListener_ != null) {
+            this.noble_.removeListener('stateChange', this.stateChangeListener_);
+            this.stateChangeListener_ = null;
+        }
         logger.info('Stopped to scan Bluetooth signals');
-    }
-    restart(callback) {
-        logger.info('Restarting');
-        this.unsubscribeRealtimeData();
-        this.subscribeRealtimeData(callback);
     }
     //
     // Private functions.
@@ -106,7 +148,7 @@ class IBS_TH1 {
         // The device can store up to 30000 data points in it, so maybe the value
         // corresponds to that index. This idea needs to be verified.
         // const expectedCrc16 = buffer[6] * 256 + buffer[5];
-        // if (expectedCrc16 != IBS_TH1.getCrc16(buffer.slice(0, 5))) {
+        // if (expectedCrc16 != IbsTh1Scanner.getCrc16(buffer.slice(0, 5))) {
         //   console.error('CRC error', this.uuid_to_address_.get(peripheral.uuid));
         //   return false;
         // }
@@ -122,73 +164,94 @@ class IBS_TH1 {
         if (!address) {
             // Check the address from now.
             this.address_fetch_status_.set(peripheral.uuid, 'FETCHING');
-            const address = await this.getAddress_(peripheral);
-            this.address_fetch_status_.set(peripheral.uuid, 'FETCHED');
-            this.uuid_to_address_.set(peripheral.uuid, address);
-            new Config('uuid_to_address').save(this.uuid_to_address_);
+            try {
+                const address = await this.getAddress_(peripheral);
+                this.address_fetch_status_.set(peripheral.uuid, 'FETCHED');
+                this.uuid_to_address_.set(peripheral.uuid, address);
+                this.addressCache_.save(this.uuid_to_address_);
+            }
+            catch (err) {
+                this.address_fetch_status_.delete(peripheral.uuid);
+                throw err;
+            }
             // Without this line, noble stops receiving broadcasted data.
-            this.restart(callback);
+            this.restart_(callback);
         }
     }
     getRealtimeData_(peripheral) {
         const buffer = peripheral.advertisement.manufacturerData;
-        if (buffer.length < 8) {
+        if (!buffer) {
             return null;
         }
-        const temperature_raw_value = buffer[1] * 256 + buffer[0];
-        const temperature = temperature_raw_value >= 0x8000 ?
-            (temperature_raw_value - 0x10000) / 100 : temperature_raw_value / 100;
-        const humidity = (buffer[3] * 256 + buffer[2]) / 100;
-        const probeType = buffer[4] == 0 ? 'BUILT_IN' : buffer[4] == 1 ? 'EXTERNAL' : 'UNKNOWN';
-        const battery = buffer[7];
-        // const productionIBS_TH1Data = buffer[8];
+        const parsedData = (0, parser_1.parseRealtimeData)(buffer);
+        if (parsedData == null) {
+            return null;
+        }
         const realtimeData = {
             date: new Date,
-            address: this.uuid_to_address_.get(peripheral.uuid) || 'error',
-            temperature: temperature,
-            humidity: humidity,
-            probeType: probeType,
-            battery: battery,
+            address: this.uuid_to_address_.get(peripheral.uuid) || null,
+            temperatureCelsius: parsedData.temperatureCelsius,
+            humidityPercent: parsedData.humidityPercent,
+            probeType: parsedData.probeType,
+            batteryPercent: parsedData.batteryPercent,
         };
         return realtimeData;
     }
     async getAddress_(peripheral) {
         logger.debug('Getting address of peripheral device with uuid =', peripheral.uuid);
-        await peripheral.connectAsync();
-        if (!peripheral.uuid) {
-            this.uuid_to_address_.delete(peripheral.uuid);
-            throw new Error('No UUID');
+        let connected = false;
+        try {
+            await peripheral.connectAsync();
+            connected = true;
+            if (!peripheral.uuid) {
+                throw new Error('No UUID');
+            }
+            logger.debug('Connected', { 'uuid': peripheral.uuid, 'address': peripheral.address });
+            return peripheral.address;
         }
-        logger.debug('Connected', { 'uuid': peripheral.uuid, 'address': peripheral.address });
-        await peripheral.disconnectAsync();
-        return peripheral.address;
+        finally {
+            if (connected) {
+                try {
+                    await peripheral.disconnectAsync();
+                }
+                catch (err) {
+                    logger.warn('Failed to disconnect from peripheral device', err);
+                }
+            }
+        }
     }
     /**
+     * @deprecated Use the exported crc16 function instead.
      * @param {Buffer} buffer
      */
     static getCrc16(buffer) {
-        let crc16 = 0xffff;
-        const iter = buffer.values();
-        let item = iter.next();
-        while (!item.done) {
-            const byte = item.value;
-            crc16 ^= byte;
-            for (let i = 0; i < 8; i++) {
-                const tmp = crc16 & 0x1;
-                crc16 >>= 1;
-                if (tmp) {
-                    crc16 ^= 0xa001;
-                }
-            }
-            item = iter.next();
+        return crc16(buffer);
+    }
+    static incrementActiveScanCount_(noble) {
+        const count = IbsTh1Scanner.activeScanCounts_.get(noble) || 0;
+        IbsTh1Scanner.activeScanCounts_.set(noble, count + 1);
+    }
+    static decrementActiveScanCount_(noble) {
+        const count = Math.max((IbsTh1Scanner.activeScanCounts_.get(noble) || 0) - 1, 0);
+        if (count === 0) {
+            IbsTh1Scanner.activeScanCounts_.delete(noble);
         }
-        return crc16;
+        else {
+            IbsTh1Scanner.activeScanCounts_.set(noble, count);
+        }
+        return count;
+    }
+    restart_(callback) {
+        logger.info('Restarting');
+        this.stop_();
+        this.subscribe(callback);
     }
 }
-exports.IBS_TH1 = IBS_TH1;
-class Config {
-    constructor(configName) {
-        this.homeDir_ = os.homedir();
+exports.IbsTh1Scanner = IbsTh1Scanner;
+IbsTh1Scanner.activeScanCounts_ = new Map();
+class FileAddressCache {
+    constructor(configName, homeDir = os.homedir()) {
+        this.homeDir_ = homeDir;
         this.configDir_ = path.join(this.homeDir_, '.ibs_th1/');
         this.configPath_ = path.join(this.configDir_, configName);
     }
@@ -202,7 +265,12 @@ class Config {
             return map;
         }
         catch (err) {
-            this.save(map);
+            if (err.code === 'ENOENT') {
+                this.save(map);
+            }
+            else {
+                logger.warn('Failed to load config. Keeping existing file untouched.', err);
+            }
             return map;
         }
     }
@@ -214,6 +282,45 @@ class Config {
         data.forEach((value, key) => {
             obj[key] = value;
         });
-        fs.writeFileSync(this.configPath_, JSON.stringify(obj), { 'encoding': 'utf8', 'mode': 0o700 });
+        fs.writeFileSync(this.configPath_, JSON.stringify(obj), { 'encoding': 'utf8', 'mode': 0o600 });
     }
 }
+exports.FileAddressCache = FileAddressCache;
+function loadDefaultNoble() {
+    try {
+        return require('@abandonware/noble');
+    }
+    catch (err) {
+        const nodeError = err;
+        if (nodeError.code === 'MODULE_NOT_FOUND') {
+            throw new Error('Bluetooth scanning requires @abandonware/noble. ' +
+                'Install it with `npm install ibs_th1 @abandonware/noble`, ' +
+                'or pass a custom NobleAdapter to new IbsTh1Scanner({ noble }). ' +
+                'The parser entry point `ibs_th1/parser` does not require Noble.');
+        }
+        throw err;
+    }
+}
+function crc16(buffer) {
+    let crc = 0xffff;
+    const iter = buffer.values();
+    let item = iter.next();
+    while (!item.done) {
+        const byte = item.value;
+        crc ^= byte;
+        for (let i = 0; i < 8; i++) {
+            const tmp = crc & 0x1;
+            crc >>= 1;
+            if (tmp) {
+                crc ^= 0xa001;
+            }
+        }
+        item = iter.next();
+    }
+    return crc;
+}
+/**
+ * @deprecated Use IbsTh1Scanner instead.
+ */
+const IBS_TH1 = IbsTh1Scanner;
+exports.IBS_TH1 = IBS_TH1;

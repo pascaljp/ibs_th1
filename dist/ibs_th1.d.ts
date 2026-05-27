@@ -1,28 +1,80 @@
-/// <reference types="node" />
-import noble from '@abandonware/noble';
-declare type ProbeType = 'UNKNOWN' | 'BUILT_IN' | 'EXTERNAL';
-declare class IBS_TH1 {
+import { parseRealtimeData } from './parser';
+import type { ProbeType } from './parser';
+type NobleEvent = 'discover' | 'stateChange';
+interface Peripheral {
+    uuid: string;
+    address: string;
+    advertisement: {
+        localName?: string;
+        manufacturerData?: Buffer;
+    };
+    connectAsync(): Promise<void>;
+    disconnectAsync(): Promise<void>;
+}
+interface NobleAdapter {
+    state: string;
+    on(event: 'discover', listener: (peripheral: Peripheral) => void): void;
+    on(event: 'stateChange', listener: (state: string) => void): void;
+    removeListener(event: NobleEvent, listener: (...args: any[]) => void): void;
+    startScanning(serviceUUIDs: string[], allowDuplicates: boolean): void;
+    stopScanning(): void;
+}
+interface AddressCache {
+    load(): Map<string, string>;
+    save(data: Map<string, string>): void;
+}
+interface IbsTh1ScannerOptions {
+    noble?: NobleAdapter;
+    addressCache?: AddressCache;
+}
+interface Subscription {
+    unsubscribe(): void;
+}
+declare class IbsTh1Scanner {
+    private static activeScanCounts_;
     private address_fetch_status_;
     private uuid_to_address_;
-    constructor();
-    subscribeRealtimeData(callback: (data: RealtimeData) => void): void;
-    unsubscribeRealtimeData(): void;
-    restart(callback: (data: RealtimeData) => void): void;
-    isTargetDevice_(peripheral: noble.Peripheral): boolean;
-    prepareAddress_(peripheral: noble.Peripheral, callback: (data: RealtimeData) => void): Promise<void>;
-    getRealtimeData_(peripheral: noble.Peripheral): RealtimeData | null;
-    getAddress_(peripheral: noble.Peripheral): Promise<string>;
+    private noble_;
+    private addressCache_;
+    private discoverListener_;
+    private stateChangeListener_;
+    private subscriptionId_;
+    constructor(options?: IbsTh1ScannerOptions);
+    subscribe(callback: (data: RealtimeData) => void): Subscription;
+    private stop_;
+    private isTargetDevice_;
+    private prepareAddress_;
+    private getRealtimeData_;
+    private getAddress_;
     /**
+     * @deprecated Use the exported crc16 function instead.
      * @param {Buffer} buffer
      */
     static getCrc16(buffer: Buffer): number;
+    private static incrementActiveScanCount_;
+    private static decrementActiveScanCount_;
+    private restart_;
 }
 interface RealtimeData {
-    address: string;
+    address: string | null;
     date: Date;
     probeType: ProbeType;
-    temperature: number;
-    humidity: number;
-    battery: number;
+    temperatureCelsius: number;
+    humidityPercent: number;
+    batteryPercent: number;
 }
-export { IBS_TH1, RealtimeData };
+declare class FileAddressCache implements AddressCache {
+    private homeDir_;
+    private configDir_;
+    private configPath_;
+    constructor(configName: string, homeDir?: string);
+    load(): Map<string, string>;
+    save(data: Map<string, string>): void;
+}
+declare function crc16(buffer: Buffer): number;
+/**
+ * @deprecated Use IbsTh1Scanner instead.
+ */
+declare const IBS_TH1: typeof IbsTh1Scanner;
+export { IBS_TH1, FileAddressCache, IbsTh1Scanner, crc16, parseRealtimeData };
+export type { AddressCache, IbsTh1ScannerOptions, NobleAdapter, Peripheral, RealtimeData, Subscription, ProbeType };
