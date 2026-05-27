@@ -12,6 +12,9 @@ const logger = Log4js.getLogger('ibs_th1');
 // Device name for IBS-TH1, IBS-TH1 mini and IBS_TH1 Plus.
 const DEVICE_NAME: string = 'sps';
 //const SERVICE_UUID: string = 'fff0';
+const MIN_ADDRESS_RETRY_DELAY_MS = 30_000;
+const MAX_ADDRESS_RETRY_DELAY_MS = 24 * 60 * 60_000;
+const ADDRESS_RETRY_BACKOFF_MULTIPLIER = 4;
 
 type AddressFetchStatus = 'FETCHING' | 'FETCHED';
 
@@ -19,7 +22,7 @@ type NobleEvent = 'discover' | 'stateChange';
 
 interface Peripheral {
   uuid: string;
-  address: string;
+  address: string | null;
   advertisement: {
     localName?: string;
     manufacturerData?: Buffer;
@@ -55,6 +58,8 @@ class IbsTh1Scanner {
   private static activeScanCounts_: Map<NobleAdapter, number> = new Map();
 
   private address_fetch_status_: Map<string, AddressFetchStatus>;
+  private address_fetch_retry_at_: Map<string, number>;
+  private address_fetch_failure_count_: Map<string, number>;
   private uuid_to_address_: Map<string, string>;
   private noble_: NobleAdapter;
   private addressCache_: AddressCache;
@@ -64,6 +69,8 @@ class IbsTh1Scanner {
 
   constructor(options: IbsTh1ScannerOptions = {}) {
     this.address_fetch_status_ = new Map<string, AddressFetchStatus>();
+    this.address_fetch_retry_at_ = new Map<string, number>();
+    this.address_fetch_failure_count_ = new Map<string, number>();
     this.noble_ = options.noble || loadDefaultNoble();
     this.addressCache_ = options.addressCache || new FileAddressCache('uuid_to_address');
     this.uuid_to_address_ = this.addressCache_.load();
@@ -184,18 +191,41 @@ class IbsTh1Scanner {
       throw new Error('Discovered => Address fetch on flight. Ignoring.');
     }
 
-    const address = this.uuid_to_address_.get(peripheral.uuid);
+    const address = IbsTh1Scanner.normalizeAddress_(this.uuid_to_address_.get(peripheral.uuid));
     if (!address) {
+      const retryAt = this.address_fetch_retry_at_.get(peripheral.uuid);
+      if (retryAt != null && Date.now() < retryAt) {
+        throw new Error('Discovered => Address fetch cooling down. Ignoring.');
+      }
+
       // Check the address from now.
       this.address_fetch_status_.set(peripheral.uuid, 'FETCHING');
       try {
         const address: string = await this.getAddress_(peripheral);
 
+        this.address_fetch_retry_at_.delete(peripheral.uuid);
+        this.address_fetch_failure_count_.delete(peripheral.uuid);
         this.address_fetch_status_.set(peripheral.uuid, 'FETCHED');
         this.uuid_to_address_.set(peripheral.uuid, address);
         this.addressCache_.save(this.uuid_to_address_);
       } catch (err) {
-      this.address_fetch_status_.delete(peripheral.uuid);
+        if (err instanceof InvalidAddressError) {
+          const failureCount = (this.address_fetch_failure_count_.get(peripheral.uuid) || 0) + 1;
+          const retryDelayMs = IbsTh1Scanner.addressRetryDelayMs_(failureCount);
+          this.address_fetch_failure_count_.set(peripheral.uuid, failureCount);
+          this.address_fetch_retry_at_.set(
+            peripheral.uuid,
+            Date.now() + retryDelayMs);
+          logger.warn(
+            'Unable to get stable address for peripheral device',
+            {
+              uuid: peripheral.uuid,
+              address: peripheral.address,
+              failureCount,
+              retryDelayMs,
+            });
+        }
+        this.address_fetch_status_.delete(peripheral.uuid);
         throw err;
       }
 
@@ -216,7 +246,7 @@ class IbsTh1Scanner {
 
     const realtimeData: RealtimeData = {
       date: new Date,
-      address: this.uuid_to_address_.get(peripheral.uuid) || null,
+      address: IbsTh1Scanner.normalizeAddress_(this.uuid_to_address_.get(peripheral.uuid)),
       temperatureCelsius: parsedData.temperatureCelsius,
       humidityPercent: parsedData.humidityPercent,
       probeType: parsedData.probeType,
@@ -235,7 +265,11 @@ class IbsTh1Scanner {
         throw new Error('No UUID');
       }
       logger.debug('Connected', { 'uuid': peripheral.uuid, 'address': peripheral.address });
-      return peripheral.address;
+      const address = IbsTh1Scanner.normalizeAddress_(peripheral.address);
+      if (address == null) {
+        throw new InvalidAddressError(`No stable address for peripheral device with uuid = ${peripheral.uuid}`);
+      }
+      return address;
     } finally {
       if (connected) {
         try {
@@ -275,6 +309,31 @@ class IbsTh1Scanner {
     this.stop_();
     this.subscribe(callback);
   }
+
+  private static addressRetryDelayMs_(failureCount: number): number {
+    return Math.min(
+      MIN_ADDRESS_RETRY_DELAY_MS * Math.pow(ADDRESS_RETRY_BACKOFF_MULTIPLIER, failureCount - 1),
+      MAX_ADDRESS_RETRY_DELAY_MS);
+  }
+
+  private static normalizeAddress_(address: string | null | undefined): string | null {
+    if (address == null) {
+      return null;
+    }
+    const normalizedAddress = address.trim();
+    if (!normalizedAddress) {
+      return null;
+    }
+
+    const lowerAddress = normalizedAddress.toLowerCase();
+    if (lowerAddress === 'unknown' || lowerAddress === '00:00:00:00:00:00') {
+      return null;
+    }
+    return normalizedAddress;
+  }
+}
+
+class InvalidAddressError extends Error {
 }
 
 interface RealtimeData {
