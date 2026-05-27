@@ -10,29 +10,61 @@
 npm i -S ibs_th1
 ```
 
+Bluetooth scanning uses `@abandonware/noble` as an optional peer dependency.
+Install it when you use `IbsTh1Scanner` to scan real devices.
+
+```bash
+npm i -S ibs_th1 @abandonware/noble
+```
+
+The parser entry point does not require Noble.
+
 ## Usage
 
 ```javascript
-const {IBS_TH1} = require('ibs_th1');
+const {IbsTh1Scanner} = require('ibs_th1');
 
 const callback = data => {
-  console.log(data.address, data.date, data.temperature, data.humidity,
-              data.probeType, data.battery);
+  console.log(data.address, data.date, data.temperatureCelsius,
+              data.humidityPercent, data.probeType, data.batteryPercent);
 };
 
-const device = new IBS_TH1();
-device.subscribeRealtimeData(callback);
+const device = new IbsTh1Scanner();
+const subscription = device.subscribe(callback);
+
+process.on('SIGINT', () => {
+  subscription.unsubscribe();
+  process.exit();
+});
 ```
 
 ```typescript
-import {IBS_TH1, RealtimeData} from '../src/ibs_th1';
+import {IbsTh1Scanner, RealtimeData} from 'ibs_th1';
 
 const callback = (data: RealtimeData) => {
   console.log(data);
 };
 
-const device = new IBS_TH1();
-device.subscribeRealtimeData(callback);
+const device = new IbsTh1Scanner();
+const subscription = device.subscribe(callback);
+
+process.on('SIGINT', () => {
+  subscription.unsubscribe();
+  process.exit();
+});
+```
+
+Each `IbsTh1Scanner` instance has one active subscription. Calling `subscribe`
+again replaces the previous callback. Use `subscription.unsubscribe()` to stop
+the active subscription.
+
+If you already have an IBS-TH1 manufacturer data buffer and only need to decode
+it, use the parser entry point. This does not start Bluetooth scanning.
+
+```typescript
+import {parseRealtimeData} from 'ibs_th1/parser';
+
+const data = parseRealtimeData(manufacturerData);
 ```
 
 ## License

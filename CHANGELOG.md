@@ -1,3 +1,19 @@
+## Version 2.0.0
+
+* Add a testable `parseRealtimeData` parser entry point.
+* Rename the primary scanner API to `IbsTh1Scanner` with `subscribe()` returning
+  a `Subscription`, and keep `IBS_TH1` only as a deprecated constructor alias.
+* Rename realtime fields to explicit units: `temperatureCelsius`,
+  `humidityPercent`, and `batteryPercent`; probe types are now lowercase.
+* Add `crc16(buffer)` as the public CRC helper.
+* Keep UUID-to-address cache persistence while making corrupt cache files safer.
+* Avoid removing other Noble listeners when unsubscribing.
+* Move `@abandonware/noble` to an optional peer dependency so parser users do
+  not install the native BLE stack.
+* Require Node.js 18 or newer for the modernized toolchain and package shape.
+* Split hardware-dependent scanning samples from automated tests and expand
+  unit coverage for parser, scanner lifecycle, address caching, and packaging.
+
 ## Version 1.2.0
 
 * Change the language from JavaScript to TypeScript.
