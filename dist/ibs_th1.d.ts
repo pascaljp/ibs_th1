@@ -3,7 +3,7 @@ import type { ProbeType } from './parser';
 type NobleEvent = 'discover' | 'stateChange';
 interface Peripheral {
     uuid: string;
-    address: string;
+    address: string | null;
     advertisement: {
         localName?: string;
         manufacturerData?: Buffer;
@@ -33,6 +33,8 @@ interface Subscription {
 declare class IbsTh1Scanner {
     private static activeScanCounts_;
     private address_fetch_status_;
+    private address_fetch_retry_at_;
+    private address_fetch_failure_count_;
     private uuid_to_address_;
     private noble_;
     private addressCache_;
@@ -54,6 +56,8 @@ declare class IbsTh1Scanner {
     private static incrementActiveScanCount_;
     private static decrementActiveScanCount_;
     private restart_;
+    private static addressRetryDelayMs_;
+    private static normalizeAddress_;
 }
 interface RealtimeData {
     address: string | null;

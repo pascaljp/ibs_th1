@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
+import * as Log4js from 'log4js';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -56,7 +57,7 @@ class MemoryAddressCache implements AddressCache {
 
 function peripheral(options: {
   uuid: string;
-  address?: string;
+  address?: string | null;
   connectError?: Error;
   localName?: string;
   manufacturerData?: Buffer;
@@ -65,7 +66,7 @@ function peripheral(options: {
 }): Peripheral {
   return {
     uuid: options.uuid,
-    address: options.address || 'aa:bb:cc:dd:ee:ff',
+    address: 'address' in options ? options.address ?? null : 'aa:bb:cc:dd:ee:ff',
     advertisement: {
       localName: options.localName ?? 'sps',
       manufacturerData: options.manufacturerData ?? Buffer.from([
@@ -129,6 +130,102 @@ test('address fetch failure is retryable and successful fetch is cached', async 
   assert.equal(cache.saveCalls, 1);
   assert.equal(received.length, 2);
   subscription.unsubscribe();
+});
+
+test('invalid address fetch is retryable and is not cached', async () => {
+  const noble = new MockNoble();
+  const cache = new MemoryAddressCache();
+  let now = 0;
+  const originalDateNow = Date.now;
+  Date.now = () => now;
+  Log4js.configure({
+    appenders: { recorded: { type: 'recording' } },
+    categories: { default: { appenders: ['recorded'], level: 'warn' } },
+  });
+  const recording = Log4js.recording();
+  recording.reset();
+  const scanner = new IbsTh1Scanner({ noble, addressCache: cache });
+  const received: any[] = [];
+  let connectCalls = 0;
+
+  const subscription = scanner.subscribe(data => received.push(data));
+  try {
+    for (const address of [null, '', '   ', ' unknown ', '00:00:00:00:00:00']) {
+      noble.discover(peripheral({
+        uuid: 'device-1',
+        address,
+        onConnect: () => {
+          connectCalls++;
+        },
+      }));
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    noble.discover(peripheral({
+      uuid: 'device-1',
+      address: ' aa:bb:cc:dd:ee:ff ',
+      onConnect: () => {
+        connectCalls++;
+      },
+    }));
+    await new Promise(resolve => setImmediate(resolve));
+    noble.discover(peripheral({ uuid: 'device-1', address: 'ignored-after-cache' }));
+    await new Promise(resolve => setImmediate(resolve));
+
+    assert.equal(connectCalls, 1);
+    assert.equal(cache.get('device-1'), undefined);
+    assert.equal(cache.saveCalls, 0);
+    assert.equal(received.length, 0);
+    assert.equal(recording.replay().length, 1);
+    assert.match(recording.replay()[0]?.data.join(' '), /Unable to get stable address/);
+
+    now = 30_000;
+    noble.discover(peripheral({
+      uuid: 'device-1',
+      address: '00:00:00:00:00:00',
+      onConnect: () => {
+        connectCalls++;
+      },
+    }));
+    await new Promise(resolve => setImmediate(resolve));
+
+    now = 149_999;
+    noble.discover(peripheral({
+      uuid: 'device-1',
+      address: ' aa:bb:cc:dd:ee:ff ',
+      onConnect: () => {
+        connectCalls++;
+      },
+    }));
+    await new Promise(resolve => setImmediate(resolve));
+
+    assert.equal(connectCalls, 2);
+    assert.equal(cache.get('device-1'), undefined);
+    assert.equal(cache.saveCalls, 0);
+    assert.equal(received.length, 0);
+    assert.equal(recording.replay().length, 2);
+
+    now = 150_000;
+    noble.discover(peripheral({
+      uuid: 'device-1',
+      address: ' aa:bb:cc:dd:ee:ff ',
+      onConnect: () => {
+        connectCalls++;
+      },
+    }));
+    await new Promise(resolve => setImmediate(resolve));
+    noble.discover(peripheral({ uuid: 'device-1', address: 'ignored-after-cache' }));
+    await new Promise(resolve => setImmediate(resolve));
+
+    assert.equal(connectCalls, 3);
+    assert.equal(cache.get('device-1'), 'aa:bb:cc:dd:ee:ff');
+    assert.equal(cache.saveCalls, 1);
+    assert.equal(received.length, 2);
+    assert.equal(received[0].address, 'aa:bb:cc:dd:ee:ff');
+    assert.equal(received[1].address, 'aa:bb:cc:dd:ee:ff');
+  } finally {
+    Date.now = originalDateNow;
+    subscription.unsubscribe();
+  }
 });
 
 test('cached addresses avoid connection and cache writes', async () => {
