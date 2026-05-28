@@ -69,7 +69,6 @@ class MemoryDeviceIdCache implements DeviceIdCache {
 
 function peripheral(options: {
   uuid: string;
-  address?: string | null;
   systemId?: Buffer | null;
   connectError?: Error;
   discoverError?: Error;
@@ -81,7 +80,6 @@ function peripheral(options: {
 }): MockPeripheral {
   return {
     uuid: options.uuid,
-    address: 'address' in options ? options.address ?? null : 'aa:bb:cc:dd:ee:ff',
     advertisement: {
       localName: options.localName ?? 'sps',
       manufacturerData: options.manufacturerData ?? Buffer.from([
@@ -159,18 +157,16 @@ test('system id fetch failure is retryable and successful fetch is cached', asyn
   await new Promise(resolve => setImmediate(resolve));
   noble.discover(peripheral({
     uuid: 'device-1',
-    address: '',
     systemId: Buffer.from('982f000000064249', 'hex'),
   }));
   await new Promise(resolve => setImmediate(resolve));
-  noble.discover(peripheral({ uuid: 'device-1', address: '' }));
+  noble.discover(peripheral({ uuid: 'device-1' }));
   await new Promise(resolve => setImmediate(resolve));
 
   assert.equal(cache.get('device-1'), 'ibs-th1-system-id:982f000000064249');
   assert.equal(cache.saveCalls, 1);
   assert.equal(received.length, 2);
   assert.equal((received[0] as any).deviceId, 'ibs-th1-system-id:982f000000064249');
-  assert.equal('address' in (received[0] as any), false);
   subscription.unsubscribe();
 });
 
@@ -195,7 +191,6 @@ test('invalid system id fetch is retryable and is not cached', async () => {
     for (const systemId of [null, Buffer.alloc(0), Buffer.alloc(8)]) {
       noble.discover(peripheral({
         uuid: 'device-1',
-        address: '',
         systemId,
         onConnect: () => {
           connectCalls++;
@@ -205,14 +200,13 @@ test('invalid system id fetch is retryable and is not cached', async () => {
     }
     noble.discover(peripheral({
       uuid: 'device-1',
-      address: '',
       systemId: Buffer.from('982f000000064249', 'hex'),
       onConnect: () => {
         connectCalls++;
       },
     }));
     await new Promise(resolve => setImmediate(resolve));
-    noble.discover(peripheral({ uuid: 'device-1', address: '' }));
+    noble.discover(peripheral({ uuid: 'device-1' }));
     await new Promise(resolve => setImmediate(resolve));
 
     assert.equal(connectCalls, 1);
@@ -225,7 +219,6 @@ test('invalid system id fetch is retryable and is not cached', async () => {
     now = 30_000;
     noble.discover(peripheral({
       uuid: 'device-1',
-      address: '',
       systemId: Buffer.alloc(8),
       onConnect: () => {
         connectCalls++;
@@ -233,10 +226,9 @@ test('invalid system id fetch is retryable and is not cached', async () => {
     }));
     await new Promise(resolve => setImmediate(resolve));
 
-    now = 149_999;
+    now = 89_999;
     noble.discover(peripheral({
       uuid: 'device-1',
-      address: '',
       systemId: Buffer.from('982f000000064249', 'hex'),
       onConnect: () => {
         connectCalls++;
@@ -250,17 +242,16 @@ test('invalid system id fetch is retryable and is not cached', async () => {
     assert.equal(received.length, 0);
     assert.equal(recording.replay().length, 2);
 
-    now = 150_000;
+    now = 90_000;
     noble.discover(peripheral({
       uuid: 'device-1',
-      address: '',
       systemId: Buffer.from('982f000000064249', 'hex'),
       onConnect: () => {
         connectCalls++;
       },
     }));
     await new Promise(resolve => setImmediate(resolve));
-    noble.discover(peripheral({ uuid: 'device-1', address: '' }));
+    noble.discover(peripheral({ uuid: 'device-1' }));
     await new Promise(resolve => setImmediate(resolve));
 
     assert.equal(connectCalls, 3);
@@ -269,6 +260,70 @@ test('invalid system id fetch is retryable and is not cached', async () => {
     assert.equal(received.length, 2);
     assert.equal(received[0].deviceId, 'ibs-th1-system-id:982f000000064249');
     assert.equal(received[1].deviceId, 'ibs-th1-system-id:982f000000064249');
+  } finally {
+    Date.now = originalDateNow;
+    subscription.unsubscribe();
+  }
+});
+
+test('device id fetch retry backs off by 2x and caps at one hour', async () => {
+  const noble = new MockNoble();
+  const cache = new MemoryDeviceIdCache();
+  let now = 0;
+  const originalDateNow = Date.now;
+  Date.now = () => now;
+  const scanner = new IbsTh1Scanner({ noble, deviceIdCache: cache });
+  let connectCalls = 0;
+
+  const subscription = scanner.subscribe(() => {});
+  try {
+    const retryAtByFailure = [
+      30_000,
+      90_000,
+      210_000,
+      450_000,
+      930_000,
+      1_890_000,
+      3_810_000,
+      7_410_000,
+    ];
+
+    for (const retryAt of retryAtByFailure) {
+      noble.discover(peripheral({
+        uuid: 'device-1',
+        systemId: Buffer.alloc(8),
+        onConnect: () => {
+          connectCalls++;
+        },
+      }));
+      await new Promise(resolve => setImmediate(resolve));
+      now = retryAt;
+    }
+
+    assert.equal(connectCalls, retryAtByFailure.length);
+
+    now = 7_409_999;
+    noble.discover(peripheral({
+      uuid: 'device-1',
+      systemId: Buffer.from('982f000000064249', 'hex'),
+      onConnect: () => {
+        connectCalls++;
+      },
+    }));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(connectCalls, retryAtByFailure.length);
+
+    now = 7_410_000;
+    noble.discover(peripheral({
+      uuid: 'device-1',
+      systemId: Buffer.from('982f000000064249', 'hex'),
+      onConnect: () => {
+        connectCalls++;
+      },
+    }));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(connectCalls, retryAtByFailure.length + 1);
+    assert.equal(cache.get('device-1'), 'ibs-th1-system-id:982f000000064249');
   } finally {
     Date.now = originalDateNow;
     subscription.unsubscribe();
@@ -295,7 +350,6 @@ test('cached device ids avoid connection and cache writes', async () => {
   assert.equal(cache.saveCalls, 0);
   assert.equal(received.length, 1);
   assert.equal(received[0].deviceId, 'ibs-th1-system-id:982f000000064249');
-  assert.equal('address' in received[0], false);
   assert.equal(received[0].temperatureCelsius, 12.34);
   assert.equal(received[0].humidityPercent, 60.1);
   assert.equal(received[0].batteryPercent, 99);
@@ -372,6 +426,12 @@ test('non-target advertisements are ignored without connecting', async () => {
 test('successful system id fetch disconnects before emitting data', async () => {
   const noble = new MockNoble();
   const cache = new MemoryDeviceIdCache();
+  Log4js.configure({
+    appenders: { recorded: { type: 'recording' } },
+    categories: { default: { appenders: ['recorded'], level: 'info' } },
+  });
+  const recording = Log4js.recording();
+  recording.reset();
   const scanner = new IbsTh1Scanner({ noble, deviceIdCache: cache });
   const events: string[] = [];
 
@@ -385,6 +445,10 @@ test('successful system id fetch disconnects before emitting data', async () => 
   await new Promise(resolve => setImmediate(resolve));
 
   assert.deepEqual(events, ['connect', 'disconnect', 'callback']);
+  assert.match(
+    recording.replay().map(event => event.data.join(' ')).join('\n'),
+    /Connecting to peripheral device to resolve stable device id/,
+  );
   subscription.unsubscribe();
 });
 

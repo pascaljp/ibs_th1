@@ -64,8 +64,8 @@ const SYSTEM_ID_CHARACTERISTIC_UUID = '2a23';
 const SYSTEM_ID_DEVICE_ID_PREFIX = 'ibs-th1-system-id:';
 //const SERVICE_UUID: string = 'fff0';
 const MIN_DEVICE_ID_RETRY_DELAY_MS = 30000;
-const MAX_DEVICE_ID_RETRY_DELAY_MS = 24 * 60 * 60000;
-const DEVICE_ID_RETRY_BACKOFF_MULTIPLIER = 4;
+const MAX_DEVICE_ID_RETRY_DELAY_MS = 60 * 60000;
+const DEVICE_ID_RETRY_BACKOFF_MULTIPLIER = 2;
 class IbsTh1Scanner {
     constructor(options = {}) {
         this.discoverListener_ = null;
@@ -272,6 +272,7 @@ class IbsTh1Scanner {
         logger.debug('Getting device id of peripheral device with uuid =', peripheral.uuid);
         let connected = false;
         try {
+            logger.info('Connecting to peripheral device to resolve stable device id', { uuid: peripheral.uuid });
             diagnosticsLog('Connecting for device id resolution', { uuid: peripheral.uuid });
             await peripheral.connectAsync();
             connected = true;

@@ -60,8 +60,7 @@ the active subscription.
 
 `data.deviceId` is a stable identifier derived from the Device Information
 Service System ID characteristic (`180a` / `2a23`) and is returned as
-`ibs-th1-system-id:<hex>`. The scanner does not use `peripheral.address` as a
-device identifier.
+`ibs-th1-system-id:<hex>`.
 
 If you already have an IBS-TH1 manufacturer data buffer and only need to decode
 it, use the parser entry point. This does not start Bluetooth scanning.

@@ -3,7 +3,6 @@ import type { ProbeType } from './parser';
 type NobleEvent = 'discover' | 'stateChange';
 interface Peripheral {
     uuid: string;
-    address: string | null;
     advertisement: {
         localName?: string;
         manufacturerData?: Buffer;
