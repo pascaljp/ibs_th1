@@ -25,7 +25,7 @@ The parser entry point does not require Noble.
 const {IbsTh1Scanner} = require('ibs_th1');
 
 const callback = data => {
-  console.log(data.address, data.date, data.temperatureCelsius,
+  console.log(data.deviceId, data.date, data.temperatureCelsius,
               data.humidityPercent, data.probeType, data.batteryPercent);
 };
 
@@ -57,6 +57,11 @@ process.on('SIGINT', () => {
 Each `IbsTh1Scanner` instance has one active subscription. Calling `subscribe`
 again replaces the previous callback. Use `subscription.unsubscribe()` to stop
 the active subscription.
+
+`data.deviceId` is a stable identifier derived from the Device Information
+Service System ID characteristic (`180a` / `2a23`) and is returned as
+`ibs-th1-system-id:<hex>`. The scanner does not use `peripheral.address` as a
+device identifier.
 
 If you already have an IBS-TH1 manufacturer data buffer and only need to decode
 it, use the parser entry point. This does not start Bluetooth scanning.

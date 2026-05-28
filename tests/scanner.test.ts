@@ -5,8 +5,20 @@ import * as Log4js from 'log4js';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { FileAddressCache, IbsTh1Scanner } from '../src/ibs_th1';
-import type { AddressCache, NobleAdapter, Peripheral } from '../src/ibs_th1';
+import { FileDeviceIdCache, IbsTh1Scanner } from '../src/ibs_th1';
+import type { DeviceIdCache, NobleAdapter, Peripheral } from '../src/ibs_th1';
+
+interface MockPeripheral extends Peripheral {
+  discoverSomeServicesAndCharacteristicsAsync(
+    serviceUUIDs: string[],
+    characteristicUUIDs: string[],
+  ): Promise<{
+    characteristics: Array<{
+      uuid: string;
+      readAsync(): Promise<Buffer>;
+    }>;
+  }>;
+}
 
 class MockNoble extends EventEmitter implements NobleAdapter {
   state = 'poweredOn';
@@ -36,7 +48,7 @@ class MockNoble extends EventEmitter implements NobleAdapter {
   }
 }
 
-class MemoryAddressCache implements AddressCache {
+class MemoryDeviceIdCache implements DeviceIdCache {
   saveCalls = 0;
 
   constructor(private data: Map<string, string> = new Map()) {}
@@ -58,12 +70,15 @@ class MemoryAddressCache implements AddressCache {
 function peripheral(options: {
   uuid: string;
   address?: string | null;
+  systemId?: Buffer | null;
   connectError?: Error;
+  discoverError?: Error;
   localName?: string;
   manufacturerData?: Buffer;
   onConnect?: () => void;
   onDisconnect?: () => void;
-}): Peripheral {
+  onDiscoverCharacteristics?: () => void;
+}): MockPeripheral {
   return {
     uuid: options.uuid,
     address: 'address' in options ? options.address ?? null : 'aa:bb:cc:dd:ee:ff',
@@ -87,13 +102,34 @@ function peripheral(options: {
     async disconnectAsync() {
       options.onDisconnect?.();
     },
+    async discoverSomeServicesAndCharacteristicsAsync(serviceUUIDs: string[], characteristicUUIDs: string[]) {
+      options.onDiscoverCharacteristics?.();
+      if (options.discoverError) {
+        throw options.discoverError;
+      }
+      assert.deepEqual(serviceUUIDs, ['180a']);
+      assert.deepEqual(characteristicUUIDs, ['2a23']);
+      if (options.systemId == null) {
+        return { characteristics: [] };
+      }
+      return {
+        characteristics: [
+          {
+            uuid: '2a23',
+            async readAsync() {
+              return options.systemId as Buffer;
+            },
+          },
+        ],
+      };
+    },
   };
 }
 
 test('unsubscribe removes only this scanner listener and stops after all scanners unsubscribe', () => {
   const noble = new MockNoble();
-  const first = new IbsTh1Scanner({ noble, addressCache: new MemoryAddressCache(new Map([['first', '11']])) });
-  const second = new IbsTh1Scanner({ noble, addressCache: new MemoryAddressCache(new Map([['second', '22']])) });
+  const first = new IbsTh1Scanner({ noble, deviceIdCache: new MemoryDeviceIdCache(new Map([['first', '11']])) });
+  const second = new IbsTh1Scanner({ noble, deviceIdCache: new MemoryDeviceIdCache(new Map([['second', '22']])) });
   const externalListener = () => {};
 
   noble.on('discover', externalListener);
@@ -112,29 +148,35 @@ test('unsubscribe removes only this scanner listener and stops after all scanner
   assert.equal(noble.listeners('discover').includes(externalListener), true);
 });
 
-test('address fetch failure is retryable and successful fetch is cached', async () => {
+test('system id fetch failure is retryable and successful fetch is cached', async () => {
   const noble = new MockNoble();
-  const cache = new MemoryAddressCache();
-  const scanner = new IbsTh1Scanner({ noble, addressCache: cache });
+  const cache = new MemoryDeviceIdCache();
+  const scanner = new IbsTh1Scanner({ noble, deviceIdCache: cache });
   const received: unknown[] = [];
 
   const subscription = scanner.subscribe(data => received.push(data));
   noble.discover(peripheral({ uuid: 'device-1', connectError: new Error('connect failed') }));
   await new Promise(resolve => setImmediate(resolve));
-  noble.discover(peripheral({ uuid: 'device-1', address: 'aa:bb:cc:dd:ee:ff' }));
+  noble.discover(peripheral({
+    uuid: 'device-1',
+    address: '',
+    systemId: Buffer.from('982f000000064249', 'hex'),
+  }));
   await new Promise(resolve => setImmediate(resolve));
-  noble.discover(peripheral({ uuid: 'device-1', address: 'aa:bb:cc:dd:ee:ff' }));
+  noble.discover(peripheral({ uuid: 'device-1', address: '' }));
   await new Promise(resolve => setImmediate(resolve));
 
-  assert.equal(cache.get('device-1'), 'aa:bb:cc:dd:ee:ff');
+  assert.equal(cache.get('device-1'), 'ibs-th1-system-id:982f000000064249');
   assert.equal(cache.saveCalls, 1);
   assert.equal(received.length, 2);
+  assert.equal((received[0] as any).deviceId, 'ibs-th1-system-id:982f000000064249');
+  assert.equal('address' in (received[0] as any), false);
   subscription.unsubscribe();
 });
 
-test('invalid address fetch is retryable and is not cached', async () => {
+test('invalid system id fetch is retryable and is not cached', async () => {
   const noble = new MockNoble();
-  const cache = new MemoryAddressCache();
+  const cache = new MemoryDeviceIdCache();
   let now = 0;
   const originalDateNow = Date.now;
   Date.now = () => now;
@@ -144,16 +186,17 @@ test('invalid address fetch is retryable and is not cached', async () => {
   });
   const recording = Log4js.recording();
   recording.reset();
-  const scanner = new IbsTh1Scanner({ noble, addressCache: cache });
+  const scanner = new IbsTh1Scanner({ noble, deviceIdCache: cache });
   const received: any[] = [];
   let connectCalls = 0;
 
   const subscription = scanner.subscribe(data => received.push(data));
   try {
-    for (const address of [null, '', '   ', ' unknown ', '00:00:00:00:00:00']) {
+    for (const systemId of [null, Buffer.alloc(0), Buffer.alloc(8)]) {
       noble.discover(peripheral({
         uuid: 'device-1',
-        address,
+        address: '',
+        systemId,
         onConnect: () => {
           connectCalls++;
         },
@@ -162,13 +205,14 @@ test('invalid address fetch is retryable and is not cached', async () => {
     }
     noble.discover(peripheral({
       uuid: 'device-1',
-      address: ' aa:bb:cc:dd:ee:ff ',
+      address: '',
+      systemId: Buffer.from('982f000000064249', 'hex'),
       onConnect: () => {
         connectCalls++;
       },
     }));
     await new Promise(resolve => setImmediate(resolve));
-    noble.discover(peripheral({ uuid: 'device-1', address: 'ignored-after-cache' }));
+    noble.discover(peripheral({ uuid: 'device-1', address: '' }));
     await new Promise(resolve => setImmediate(resolve));
 
     assert.equal(connectCalls, 1);
@@ -176,12 +220,13 @@ test('invalid address fetch is retryable and is not cached', async () => {
     assert.equal(cache.saveCalls, 0);
     assert.equal(received.length, 0);
     assert.equal(recording.replay().length, 1);
-    assert.match(recording.replay()[0]?.data.join(' '), /Unable to get stable address/);
+    assert.match(recording.replay()[0]?.data.join(' '), /Unable to get stable device id/);
 
     now = 30_000;
     noble.discover(peripheral({
       uuid: 'device-1',
-      address: '00:00:00:00:00:00',
+      address: '',
+      systemId: Buffer.alloc(8),
       onConnect: () => {
         connectCalls++;
       },
@@ -191,7 +236,8 @@ test('invalid address fetch is retryable and is not cached', async () => {
     now = 149_999;
     noble.discover(peripheral({
       uuid: 'device-1',
-      address: ' aa:bb:cc:dd:ee:ff ',
+      address: '',
+      systemId: Buffer.from('982f000000064249', 'hex'),
       onConnect: () => {
         connectCalls++;
       },
@@ -207,31 +253,32 @@ test('invalid address fetch is retryable and is not cached', async () => {
     now = 150_000;
     noble.discover(peripheral({
       uuid: 'device-1',
-      address: ' aa:bb:cc:dd:ee:ff ',
+      address: '',
+      systemId: Buffer.from('982f000000064249', 'hex'),
       onConnect: () => {
         connectCalls++;
       },
     }));
     await new Promise(resolve => setImmediate(resolve));
-    noble.discover(peripheral({ uuid: 'device-1', address: 'ignored-after-cache' }));
+    noble.discover(peripheral({ uuid: 'device-1', address: '' }));
     await new Promise(resolve => setImmediate(resolve));
 
     assert.equal(connectCalls, 3);
-    assert.equal(cache.get('device-1'), 'aa:bb:cc:dd:ee:ff');
+    assert.equal(cache.get('device-1'), 'ibs-th1-system-id:982f000000064249');
     assert.equal(cache.saveCalls, 1);
     assert.equal(received.length, 2);
-    assert.equal(received[0].address, 'aa:bb:cc:dd:ee:ff');
-    assert.equal(received[1].address, 'aa:bb:cc:dd:ee:ff');
+    assert.equal(received[0].deviceId, 'ibs-th1-system-id:982f000000064249');
+    assert.equal(received[1].deviceId, 'ibs-th1-system-id:982f000000064249');
   } finally {
     Date.now = originalDateNow;
     subscription.unsubscribe();
   }
 });
 
-test('cached addresses avoid connection and cache writes', async () => {
+test('cached device ids avoid connection and cache writes', async () => {
   const noble = new MockNoble();
-  const cache = new MemoryAddressCache(new Map([['device-1', '11:22:33:44:55:66']]));
-  const scanner = new IbsTh1Scanner({ noble, addressCache: cache });
+  const cache = new MemoryDeviceIdCache(new Map([['device-1', 'ibs-th1-system-id:982f000000064249']]));
+  const scanner = new IbsTh1Scanner({ noble, deviceIdCache: cache });
   const received: any[] = [];
   let connectCalls = 0;
 
@@ -247,7 +294,8 @@ test('cached addresses avoid connection and cache writes', async () => {
   assert.equal(connectCalls, 0);
   assert.equal(cache.saveCalls, 0);
   assert.equal(received.length, 1);
-  assert.equal(received[0].address, '11:22:33:44:55:66');
+  assert.equal(received[0].deviceId, 'ibs-th1-system-id:982f000000064249');
+  assert.equal('address' in received[0], false);
   assert.equal(received[0].temperatureCelsius, 12.34);
   assert.equal(received[0].humidityPercent, 60.1);
   assert.equal(received[0].batteryPercent, 99);
@@ -258,7 +306,7 @@ test('cached addresses avoid connection and cache writes', async () => {
 test('stateChange starts scanning when Bluetooth powers on', () => {
   const noble = new MockNoble();
   noble.state = 'poweredOff';
-  const scanner = new IbsTh1Scanner({ noble, addressCache: new MemoryAddressCache() });
+  const scanner = new IbsTh1Scanner({ noble, deviceIdCache: new MemoryDeviceIdCache() });
 
   const subscription = scanner.subscribe(() => {});
   assert.equal(noble.startScanningCalls, 0);
@@ -276,7 +324,7 @@ test('old subscription does not unsubscribe a newer subscription on the same sca
   const noble = new MockNoble();
   const scanner = new IbsTh1Scanner({
     noble,
-    addressCache: new MemoryAddressCache(new Map([['device-1', '11:22:33:44:55:66']])),
+    deviceIdCache: new MemoryDeviceIdCache(new Map([['device-1', '11:22:33:44:55:66']])),
   });
 
   const oldSubscription = scanner.subscribe(() => {});
@@ -293,8 +341,8 @@ test('old subscription does not unsubscribe a newer subscription on the same sca
 
 test('non-target advertisements are ignored without connecting', async () => {
   const noble = new MockNoble();
-  const cache = new MemoryAddressCache();
-  const scanner = new IbsTh1Scanner({ noble, addressCache: cache });
+  const cache = new MemoryDeviceIdCache();
+  const scanner = new IbsTh1Scanner({ noble, deviceIdCache: cache });
   const received: unknown[] = [];
   let connectCalls = 0;
 
@@ -321,15 +369,16 @@ test('non-target advertisements are ignored without connecting', async () => {
   subscription.unsubscribe();
 });
 
-test('successful address fetch disconnects before emitting data', async () => {
+test('successful system id fetch disconnects before emitting data', async () => {
   const noble = new MockNoble();
-  const cache = new MemoryAddressCache();
-  const scanner = new IbsTh1Scanner({ noble, addressCache: cache });
+  const cache = new MemoryDeviceIdCache();
+  const scanner = new IbsTh1Scanner({ noble, deviceIdCache: cache });
   const events: string[] = [];
 
   const subscription = scanner.subscribe(() => events.push('callback'));
   noble.discover(peripheral({
     uuid: 'device-1',
+    systemId: Buffer.from('982f000000064249', 'hex'),
     onConnect: () => events.push('connect'),
     onDisconnect: () => events.push('disconnect'),
   }));
@@ -339,25 +388,25 @@ test('successful address fetch disconnects before emitting data', async () => {
   subscription.unsubscribe();
 });
 
-test('FileAddressCache does not overwrite corrupt cache files', () => {
+test('FileDeviceIdCache does not overwrite corrupt cache files', () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ibs-th1-'));
   const configDir = path.join(homeDir, '.ibs_th1');
-  const configPath = path.join(configDir, 'uuid_to_address');
+  const configPath = path.join(configDir, 'uuid_to_device_id');
   fs.mkdirSync(configDir);
   fs.writeFileSync(configPath, '{broken json', 'utf8');
 
-  const cache = new FileAddressCache('uuid_to_address', homeDir);
+  const cache = new FileDeviceIdCache('uuid_to_device_id', homeDir);
   const loaded = cache.load();
 
   assert.equal(loaded.size, 0);
   assert.equal(fs.readFileSync(configPath, 'utf8'), '{broken json');
 });
 
-test('FileAddressCache creates missing cache files with private permissions', () => {
+test('FileDeviceIdCache creates missing cache files with private permissions', () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ibs-th1-'));
-  const configPath = path.join(homeDir, '.ibs_th1', 'uuid_to_address');
+  const configPath = path.join(homeDir, '.ibs_th1', 'uuid_to_device_id');
 
-  const cache = new FileAddressCache('uuid_to_address', homeDir);
+  const cache = new FileDeviceIdCache('uuid_to_device_id', homeDir);
   const loaded = cache.load();
   const mode = fs.statSync(configPath).mode & 0o777;
 
@@ -367,6 +416,6 @@ test('FileAddressCache creates missing cache files with private permissions', ()
 
 test('default scanner explains how to install Noble when it is missing', () => {
   assert.throws(
-    () => new IbsTh1Scanner({ addressCache: new MemoryAddressCache() }),
+    () => new IbsTh1Scanner({ deviceIdCache: new MemoryDeviceIdCache() }),
     /Bluetooth scanning requires @abandonware\/noble.*npm install ibs_th1 @abandonware\/noble/s);
 });

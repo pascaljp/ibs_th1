@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.parseRealtimeData = exports.IbsTh1Scanner = exports.FileAddressCache = exports.IBS_TH1 = void 0;
+exports.parseRealtimeData = exports.IbsTh1Scanner = exports.FileDeviceIdCache = exports.IBS_TH1 = void 0;
 exports.crc16 = crc16;
 const fs = __importStar(require("fs"));
 const Log4js = __importStar(require("log4js"));
@@ -42,23 +42,41 @@ const path = __importStar(require("path"));
 const parser_1 = require("./parser");
 Object.defineProperty(exports, "parseRealtimeData", { enumerable: true, get: function () { return parser_1.parseRealtimeData; } });
 const logger = Log4js.getLogger('ibs_th1');
+const diagnosticsSetting = process.env['IBS_TH1_DIAGNOSTICS'];
+const diagnosticsEnabled = diagnosticsSetting === '1' ||
+    diagnosticsSetting?.toLowerCase() === 'true';
+const diagnosticsLog = (...args) => {
+    if (diagnosticsEnabled) {
+        // eslint-disable-next-line no-console
+        console.log('[ibs_th1:diag]', ...args);
+    }
+};
+const diagnosticsWarn = (...args) => {
+    if (diagnosticsEnabled) {
+        // eslint-disable-next-line no-console
+        console.warn('[ibs_th1:diag]', ...args);
+    }
+};
 // Device name for IBS-TH1, IBS-TH1 mini and IBS_TH1 Plus.
 const DEVICE_NAME = 'sps';
+const DEVICE_INFORMATION_SERVICE_UUID = '180a';
+const SYSTEM_ID_CHARACTERISTIC_UUID = '2a23';
+const SYSTEM_ID_DEVICE_ID_PREFIX = 'ibs-th1-system-id:';
 //const SERVICE_UUID: string = 'fff0';
-const MIN_ADDRESS_RETRY_DELAY_MS = 30000;
-const MAX_ADDRESS_RETRY_DELAY_MS = 24 * 60 * 60000;
-const ADDRESS_RETRY_BACKOFF_MULTIPLIER = 4;
+const MIN_DEVICE_ID_RETRY_DELAY_MS = 30000;
+const MAX_DEVICE_ID_RETRY_DELAY_MS = 24 * 60 * 60000;
+const DEVICE_ID_RETRY_BACKOFF_MULTIPLIER = 4;
 class IbsTh1Scanner {
     constructor(options = {}) {
         this.discoverListener_ = null;
         this.stateChangeListener_ = null;
         this.subscriptionId_ = 0;
-        this.address_fetch_status_ = new Map();
-        this.address_fetch_retry_at_ = new Map();
-        this.address_fetch_failure_count_ = new Map();
+        this.device_id_fetch_status_ = new Map();
+        this.device_id_fetch_retry_at_ = new Map();
+        this.device_id_fetch_failure_count_ = new Map();
         this.noble_ = options.noble || loadDefaultNoble();
-        this.addressCache_ = options.addressCache || new FileAddressCache('uuid_to_address');
-        this.uuid_to_address_ = this.addressCache_.load();
+        this.deviceIdCache_ = options.deviceIdCache || new FileDeviceIdCache('uuid_to_device_id');
+        this.uuid_to_device_id_ = this.deviceIdCache_.load();
     }
     //
     // Public functions.
@@ -75,9 +93,15 @@ class IbsTh1Scanner {
                     return;
                 }
                 try {
-                    await this.prepareAddress_(peripheral, callback);
+                    await this.prepareDeviceId_(peripheral, callback);
                 }
                 catch (err) {
+                    diagnosticsWarn('prepareDeviceId_ skipped', {
+                        uuid: peripheral.uuid,
+                        localName: peripheral.advertisement.localName,
+                        mfgLen: peripheral.advertisement.manufacturerData?.byteLength,
+                        reason: err instanceof Error ? err.message : String(err),
+                    });
                     return;
                 }
                 try {
@@ -155,47 +179,69 @@ class IbsTh1Scanner {
         // corresponds to that index. This idea needs to be verified.
         // const expectedCrc16 = buffer[6] * 256 + buffer[5];
         // if (expectedCrc16 != IbsTh1Scanner.getCrc16(buffer.slice(0, 5))) {
-        //   console.error('CRC error', this.uuid_to_address_.get(peripheral.uuid));
+        //   console.error('CRC error', this.uuid_to_device_id_.get(peripheral.uuid));
         //   return false;
         // }
         return true;
     }
-    async prepareAddress_(peripheral, callback) {
-        const fetchStatus = this.address_fetch_status_.get(peripheral.uuid);
+    async prepareDeviceId_(peripheral, callback) {
+        const fetchStatus = this.device_id_fetch_status_.get(peripheral.uuid);
+        diagnosticsLog('prepareDeviceId_ start', {
+            uuid: peripheral.uuid,
+            fetchStatus,
+            cachedDeviceId: this.uuid_to_device_id_.get(peripheral.uuid),
+            retryAt: this.device_id_fetch_retry_at_.get(peripheral.uuid),
+        });
         if (fetchStatus == 'FETCHING') {
-            // Another thread is checking the address now.
-            throw new Error('Discovered => Address fetch on flight. Ignoring.');
+            // Another thread is checking the device id now.
+            throw new Error('Discovered => Device id fetch in flight. Ignoring.');
         }
-        const address = IbsTh1Scanner.normalizeAddress_(this.uuid_to_address_.get(peripheral.uuid));
-        if (!address) {
-            const retryAt = this.address_fetch_retry_at_.get(peripheral.uuid);
+        const deviceId = IbsTh1Scanner.normalizeDeviceId_(this.uuid_to_device_id_.get(peripheral.uuid));
+        if (!deviceId) {
+            const retryAt = this.device_id_fetch_retry_at_.get(peripheral.uuid);
             if (retryAt != null && Date.now() < retryAt) {
-                throw new Error('Discovered => Address fetch cooling down. Ignoring.');
+                throw new Error('Discovered => Device id fetch cooling down. Ignoring.');
             }
-            // Check the address from now.
-            this.address_fetch_status_.set(peripheral.uuid, 'FETCHING');
+            // Check the device id from now.
+            this.device_id_fetch_status_.set(peripheral.uuid, 'FETCHING');
             try {
-                const address = await this.getAddress_(peripheral);
-                this.address_fetch_retry_at_.delete(peripheral.uuid);
-                this.address_fetch_failure_count_.delete(peripheral.uuid);
-                this.address_fetch_status_.set(peripheral.uuid, 'FETCHED');
-                this.uuid_to_address_.set(peripheral.uuid, address);
-                this.addressCache_.save(this.uuid_to_address_);
+                const deviceId = await this.getDeviceId_(peripheral);
+                this.device_id_fetch_retry_at_.delete(peripheral.uuid);
+                this.device_id_fetch_failure_count_.delete(peripheral.uuid);
+                this.device_id_fetch_status_.set(peripheral.uuid, 'FETCHED');
+                this.uuid_to_device_id_.set(peripheral.uuid, deviceId);
+                this.deviceIdCache_.save(this.uuid_to_device_id_);
+                diagnosticsLog('Stable device id resolved', {
+                    uuid: peripheral.uuid,
+                    deviceId,
+                    totalKnown: this.uuid_to_device_id_.size,
+                });
             }
             catch (err) {
-                if (err instanceof InvalidAddressError) {
-                    const failureCount = (this.address_fetch_failure_count_.get(peripheral.uuid) || 0) + 1;
-                    const retryDelayMs = IbsTh1Scanner.addressRetryDelayMs_(failureCount);
-                    this.address_fetch_failure_count_.set(peripheral.uuid, failureCount);
-                    this.address_fetch_retry_at_.set(peripheral.uuid, Date.now() + retryDelayMs);
-                    logger.warn('Unable to get stable address for peripheral device', {
+                if (err instanceof InvalidDeviceIdError) {
+                    const failureCount = (this.device_id_fetch_failure_count_.get(peripheral.uuid) || 0) + 1;
+                    const retryDelayMs = IbsTh1Scanner.deviceIdRetryDelayMs_(failureCount);
+                    this.device_id_fetch_failure_count_.set(peripheral.uuid, failureCount);
+                    this.device_id_fetch_retry_at_.set(peripheral.uuid, Date.now() + retryDelayMs);
+                    logger.warn('Unable to get stable device id for peripheral device', {
                         uuid: peripheral.uuid,
-                        address: peripheral.address,
                         failureCount,
                         retryDelayMs,
                     });
+                    diagnosticsWarn('Unable to get stable device id for peripheral device', {
+                        uuid: peripheral.uuid,
+                        failureCount,
+                        retryDelayMs,
+                        error: err.message,
+                    });
                 }
-                this.address_fetch_status_.delete(peripheral.uuid);
+                else {
+                    diagnosticsWarn('prepareDeviceId_ unexpected error', {
+                        uuid: peripheral.uuid,
+                        error: err instanceof Error ? err.message : String(err),
+                    });
+                }
+                this.device_id_fetch_status_.delete(peripheral.uuid);
                 throw err;
             }
             // Without this line, noble stops receiving broadcasted data.
@@ -213,7 +259,7 @@ class IbsTh1Scanner {
         }
         const realtimeData = {
             date: new Date,
-            address: IbsTh1Scanner.normalizeAddress_(this.uuid_to_address_.get(peripheral.uuid)),
+            deviceId: IbsTh1Scanner.normalizeDeviceId_(this.uuid_to_device_id_.get(peripheral.uuid)),
             temperatureCelsius: parsedData.temperatureCelsius,
             humidityPercent: parsedData.humidityPercent,
             probeType: parsedData.probeType,
@@ -221,25 +267,43 @@ class IbsTh1Scanner {
         };
         return realtimeData;
     }
-    async getAddress_(peripheral) {
-        logger.debug('Getting address of peripheral device with uuid =', peripheral.uuid);
+    async getDeviceId_(peripheral) {
+        diagnosticsLog('Device id resolution start', { uuid: peripheral.uuid });
+        logger.debug('Getting device id of peripheral device with uuid =', peripheral.uuid);
         let connected = false;
         try {
+            diagnosticsLog('Connecting for device id resolution', { uuid: peripheral.uuid });
             await peripheral.connectAsync();
             connected = true;
             if (!peripheral.uuid) {
                 throw new Error('No UUID');
             }
-            logger.debug('Connected', { 'uuid': peripheral.uuid, 'address': peripheral.address });
-            const address = IbsTh1Scanner.normalizeAddress_(peripheral.address);
-            if (address == null) {
-                throw new InvalidAddressError(`No stable address for peripheral device with uuid = ${peripheral.uuid}`);
+            diagnosticsLog('Connected', { uuid: peripheral.uuid });
+            logger.debug('Connected', { uuid: peripheral.uuid });
+            const { characteristics } = await peripheral.discoverSomeServicesAndCharacteristicsAsync([DEVICE_INFORMATION_SERVICE_UUID], [SYSTEM_ID_CHARACTERISTIC_UUID]);
+            const systemIdCharacteristic = characteristics.find(characteristic => characteristic.uuid.toLowerCase() === SYSTEM_ID_CHARACTERISTIC_UUID);
+            if (!systemIdCharacteristic) {
+                throw new InvalidDeviceIdError(`No System ID characteristic for peripheral device with uuid = ${peripheral.uuid}`);
             }
-            return address;
+            const systemId = await systemIdCharacteristic.readAsync();
+            const deviceId = IbsTh1Scanner.systemIdToDeviceId_(systemId);
+            if (deviceId == null) {
+                throw new InvalidDeviceIdError(`No stable device id for peripheral device with uuid = ${peripheral.uuid}`);
+            }
+            diagnosticsLog('Device id resolved', { uuid: peripheral.uuid, deviceId });
+            return deviceId;
+        }
+        catch (err) {
+            diagnosticsWarn('Device id resolution failed', {
+                uuid: peripheral.uuid,
+                error: err instanceof Error ? err.message : String(err),
+            });
+            throw err;
         }
         finally {
             if (connected) {
                 try {
+                    diagnosticsLog('Disconnecting peripheral', { uuid: peripheral.uuid });
                     await peripheral.disconnectAsync();
                 }
                 catch (err) {
@@ -274,29 +338,35 @@ class IbsTh1Scanner {
         this.stop_();
         this.subscribe(callback);
     }
-    static addressRetryDelayMs_(failureCount) {
-        return Math.min(MIN_ADDRESS_RETRY_DELAY_MS * Math.pow(ADDRESS_RETRY_BACKOFF_MULTIPLIER, failureCount - 1), MAX_ADDRESS_RETRY_DELAY_MS);
+    static deviceIdRetryDelayMs_(failureCount) {
+        return Math.min(MIN_DEVICE_ID_RETRY_DELAY_MS * Math.pow(DEVICE_ID_RETRY_BACKOFF_MULTIPLIER, failureCount - 1), MAX_DEVICE_ID_RETRY_DELAY_MS);
     }
-    static normalizeAddress_(address) {
-        if (address == null) {
+    static normalizeDeviceId_(deviceId) {
+        if (deviceId == null) {
             return null;
         }
-        const normalizedAddress = address.trim();
-        if (!normalizedAddress) {
+        const normalizedDeviceId = deviceId.trim();
+        if (!normalizedDeviceId) {
             return null;
         }
-        const lowerAddress = normalizedAddress.toLowerCase();
-        if (lowerAddress === 'unknown' || lowerAddress === '00:00:00:00:00:00') {
+        return normalizedDeviceId;
+    }
+    static systemIdToDeviceId_(systemId) {
+        if (systemId.byteLength === 0) {
             return null;
         }
-        return normalizedAddress;
+        const hex = systemId.toString('hex').toLowerCase();
+        if (/^0+$/.test(hex)) {
+            return null;
+        }
+        return `${SYSTEM_ID_DEVICE_ID_PREFIX}${hex}`;
     }
 }
 exports.IbsTh1Scanner = IbsTh1Scanner;
 IbsTh1Scanner.activeScanCounts_ = new Map();
-class InvalidAddressError extends Error {
+class InvalidDeviceIdError extends Error {
 }
-class FileAddressCache {
+class FileDeviceIdCache {
     constructor(configName, homeDir = os.homedir()) {
         this.homeDir_ = homeDir;
         this.configDir_ = path.join(this.homeDir_, '.ibs_th1/');
@@ -332,7 +402,7 @@ class FileAddressCache {
         fs.writeFileSync(this.configPath_, JSON.stringify(obj), { 'encoding': 'utf8', 'mode': 0o600 });
     }
 }
-exports.FileAddressCache = FileAddressCache;
+exports.FileDeviceIdCache = FileDeviceIdCache;
 function loadDefaultNoble() {
     try {
         return require('@abandonware/noble');

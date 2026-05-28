@@ -23,7 +23,7 @@ const expected = {
 
 assert.equal(typeof main.IbsTh1Scanner, 'function');
 assert.equal(main.IBS_TH1, main.IbsTh1Scanner);
-assert.equal(typeof main.FileAddressCache, 'function');
+assert.equal(typeof main.FileDeviceIdCache, 'function');
 assert.equal(typeof main.crc16, 'function');
 assert.deepEqual(main.parseRealtimeData(payload), expected);
 assert.deepEqual(parser.parseRealtimeData(payload), expected);

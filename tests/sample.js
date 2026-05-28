@@ -1,7 +1,7 @@
 const {IbsTh1Scanner} = require('../dist/ibs_th1');
 
 const callback = data => {
-  console.log(data.address, data.date, data.temperatureCelsius,
+  console.log(data.deviceId, data.date, data.temperatureCelsius,
               data.humidityPercent, data.probeType, data.batteryPercent);
 };
 
